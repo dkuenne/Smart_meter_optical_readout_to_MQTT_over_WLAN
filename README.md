@@ -1,5 +1,7 @@
 # Smart meter optical readout to MQTT over WLAN
 
+# !!! WORK IN PROGRESS !!!
+
 ## Description
 
 With this project you can get your energy smart meters data over the IR interface and send it to your MQTT broker over WLAN.
@@ -8,7 +10,7 @@ With this project you can get your energy smart meters data over the IR interfac
 
 ## Hardware
 
-- Seeed Studio XIAO ESP32-C3
+- ESP32-C3 Super Mini
 - [ELV Smart Meter ES-IEC read head](https://de.elv.com/p/elv-bausatz-energiesensor-fuer-smart-meter-es-iec-stromzaehlerausleser-P142148/)
   - used on EFR smart meter
   - see full compatibility list on the manufacturers page

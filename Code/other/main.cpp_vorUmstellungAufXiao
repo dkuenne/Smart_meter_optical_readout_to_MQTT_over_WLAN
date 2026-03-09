@@ -1,0 +1,396 @@
+// Includes
+#include <Arduino.h>
+#include <SoftwareSerial.h>
+
+SoftwareSerial loRaModule;
+const int loRaModuleM0 = 32;
+const int loRaModuleM1 = 33;
+
+byte serialByteBuffer[5]; // Buffer for receiving serial data
+int startArrayIndex = 0;
+int stopArrayIndex = 0;
+
+const byte beforeUsedPowerMarker[] = {0x77, 0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF}; // 77070100010800FF
+byte beforeUsedPowerMarkerBuffer[8];
+byte beforeUsedPowerMarkerCompareBuffer[8];
+
+const byte beforeCurrentPowerMarker[] = {0x77, 0x07, 0x01, 0x00, 0x10, 0x07, 0x00, 0xFF}; // 77070100100700FF
+byte beforeCurrentPowerMarkerBuffer[8];
+byte beforeCurrentPowerMarkerCompareBuffer[8];
+
+// Ring Buffer
+int tempArrayIndexToWrite = 0;             // Array position for writing
+int tempArrayIndexToRead = 0;              // Array position for reading
+int tempCurrentPowerArrayIndexToWrite = 0; // Array position for writing
+int tempCurrentPowerArrayIndexToRead = 0;  // Array position for reading
+int beforeUsedPowerMarkerCompareBufferIndex = 7;
+int beforeCurrentPowerMarkerCompareBufferIndex = 7;
+bool continueFilling = true; // Stop getting data if marker was found
+bool findbeforeUsedPowerMarkerMissing = true;
+bool findbeforeCurrentPowerMarkerMissing = true;
+int status;
+
+// Received 1.8.0 data (Gesamtverbrauch)
+byte usedPowerBuffer[8];
+int usedPowerBufferIndex = 0;
+int usedPower;
+long usedPowerkWh;
+
+// Received 16.7.0 data (Momentanverbrauch)
+byte currentPowerBuffer[4];
+int currentPowerBufferIndex = 0;
+int currentPower;
+
+bool continueSearch = true;
+
+void findbeforeUsedPowerMarker()
+{
+
+  // Fill buffer with serial data byte by byte and compare
+  while (continueFilling == true)
+  {
+
+    // Fill buffer
+    // Check if at the end first
+    if (tempArrayIndexToWrite == sizeof(beforeUsedPowerMarkerBuffer))
+    {
+      tempArrayIndexToWrite = 0;
+    }
+
+    // Read one byte, place it into buffer and fill array with it
+    Serial2.readBytes(serialByteBuffer, 1);
+    beforeUsedPowerMarkerBuffer[tempArrayIndexToWrite] = serialByteBuffer[0];
+
+    // Read and compare
+    // Since we know the end position after filling we fill the array to compare backwards to keep the right direction of data
+    tempArrayIndexToRead = tempArrayIndexToWrite;
+
+    beforeUsedPowerMarkerCompareBufferIndex = 7;
+    for (int i2 = 0; i2 < 8 && continueFilling == true; i2++)
+    {
+
+      // Check if we are at the beginning of the array, if yes start at the end
+      if (tempArrayIndexToRead == -1)
+      {
+        tempArrayIndexToRead = sizeof(beforeUsedPowerMarkerBuffer) - 1; // Arrays are 0-7 for 8 parts so max. position is 7
+      }
+
+      beforeUsedPowerMarkerCompareBuffer[beforeUsedPowerMarkerCompareBufferIndex] = beforeUsedPowerMarkerBuffer[tempArrayIndexToRead];
+
+      // Compare and break loop if found
+      status = memcmp(beforeUsedPowerMarker, beforeUsedPowerMarkerCompareBuffer, sizeof(beforeUsedPowerMarker));
+      if (status == 0)
+        continueFilling = false;
+      if (status == 0)
+        findbeforeUsedPowerMarkerMissing = false;
+      else
+        ;
+
+      // Step one position back in array
+      beforeUsedPowerMarkerCompareBufferIndex--;
+      tempArrayIndexToRead--;
+    }
+
+    // Write at next position in array
+    tempArrayIndexToWrite++;
+  }
+}
+
+void findbeforeCurrentPowerMarker()
+{
+
+  // Fill buffer with serial data byte by byte and compare
+  while (continueFilling == true)
+  {
+
+    // Fill buffer
+    // Check if at the end first
+    if (tempCurrentPowerArrayIndexToWrite == sizeof(beforeCurrentPowerMarkerBuffer))
+    {
+      tempCurrentPowerArrayIndexToWrite = 0;
+    }
+
+    // Read one byte, place it into buffer and fill array with it
+    Serial2.readBytes(serialByteBuffer, 1);
+    beforeCurrentPowerMarkerBuffer[tempCurrentPowerArrayIndexToWrite] = serialByteBuffer[0];
+
+    // Read and compare
+    // Since we know the end position after filling we fill the array to compare backwards to keep the right direction of data
+    tempCurrentPowerArrayIndexToRead = tempCurrentPowerArrayIndexToWrite;
+
+    beforeCurrentPowerMarkerCompareBufferIndex = 7;
+    for (int i2 = 0; i2 < 8 && continueFilling == true; i2++)
+    {
+
+      // Check if we are at the beginning of the array, if yes start at the end
+      if (tempCurrentPowerArrayIndexToRead == -1)
+      {
+        tempCurrentPowerArrayIndexToRead = sizeof(beforeCurrentPowerMarkerBuffer) - 1; // Arrays are 0-7 for 8 parts so max. position is 7
+      }
+
+      beforeCurrentPowerMarkerCompareBuffer[beforeCurrentPowerMarkerCompareBufferIndex] = beforeCurrentPowerMarkerBuffer[tempCurrentPowerArrayIndexToRead];
+
+      // Compare and break loop if found
+      status = memcmp(beforeCurrentPowerMarker, beforeCurrentPowerMarkerCompareBuffer, sizeof(beforeCurrentPowerMarker));
+      if (status == 0)
+        continueFilling = false;
+      if (status == 0)
+        findbeforeCurrentPowerMarkerMissing = false;
+      else
+        ;
+
+      // Step one position back in array
+      beforeCurrentPowerMarkerCompareBufferIndex--;
+      tempCurrentPowerArrayIndexToRead--;
+    }
+
+    // Write at next position in array
+    tempCurrentPowerArrayIndexToWrite++;
+  }
+}
+
+
+int ix = 0;
+void handleUsedPowerData()
+{
+  // We need to get rid of 17 Bytes after the marker
+  // -> 64 1C 00 04 72 62 01 65 03 5A 58 BF 62 1E 52 FF 65
+  // Since there are 2x empty reads (wtf?) we need to discard 19 Bytes
+  // for(int i = 0; i < 19; i++){
+  // while(Serial2.peek() == -1){
+  //  //Serial.println("Peek & delete");
+  //  Serial2.read();
+  //}
+  // for(int i = 0; i < 16; i++){
+  //  Serial.println("Currently discarding: ");
+  //  Serial.print(Serial2.read());
+  //  Serial.println();
+  //  Serial2.read();
+  //}
+
+  byte discardBuffer[20];
+  Serial2.readBytes(discardBuffer, 17);
+
+  // Serial.print("Discard buffer: ");
+  // while(ix < 18){
+  //   Serial.println(discardBuffer[ix]);
+  //   ix++;
+  // }
+
+  // now gather 4 bytes, the wanted data
+  Serial2.readBytes(usedPowerBuffer, 4);
+  // for(int i = 0; i < 4; i++){
+  //   usedPowerBuffer[usedPowerBufferIndex] = Serial2.read();
+  //
+  //   Serial.print("got usedPower from serial: ");
+  //   Serial.println(usedPowerBuffer[usedPowerBufferIndex]);
+  //   usedPowerBufferIndex++;
+  // }
+  usedPower = (usedPowerBuffer[0] << 24 | usedPowerBuffer[1] << 16 | usedPowerBuffer[2] << 8 | usedPowerBuffer[3]); // merge 4 bytes into single variable to calculate power value
+
+  // DEBUGhhhh
+  // Serial.print("usedPower as HEX: "); // 10376CA
+  // Serial.println(usedPower, HEX);
+
+  // Serial.print("usedPower as DEC: "); // 17004234
+  // Serial.println(usedPower, DEC);
+
+  // DEBUGhhh end
+  usedPowerkWh = usedPower / 10000;
+  Serial.print("Gesamtverbrauch (DEC): "); // 1700 kWh
+  Serial.println(usedPowerkWh);
+  loRaModule.print("<01;01;");
+  loRaModule.print(usedPowerkWh);
+  loRaModule.println(">");
+}
+
+int ix2 = 0;
+void handleCurrentPowerData()
+{
+  // We need to get rid of 8 Bytes after the marker
+  // -> 01 01 62 1B 52 00 53
+  // while(Serial2.peek() == -1){
+  //  //Serial.println("Peek & delete");
+  //  Serial2.read();
+  //}
+  //
+  // for(int i = 0; i < 5; i++){
+  //  //Serial.print("Currently discarding: ");
+  //  //Serial.print(Serial2.read());
+  //  //Serial.println();
+  //  Serial2.read();
+  //}
+
+  byte discardBuffer2[20];
+  Serial2.readBytes(discardBuffer2, 7);
+
+  // Serial.print("Discard buffer 2: ");
+  // while(ix2 < 7){
+  //   Serial.println(discardBuffer2[ix2]);
+  //   ix2++;
+  // }
+
+  // now gather 2 bytes, the wanted data
+  Serial2.readBytes(currentPowerBuffer, 2);
+  // for(int i = 0; i < 2; i++){
+  //   currentPowerBuffer[currentPowerBufferIndex] = Serial2.read();
+  //   //Serial.print("got currentPower from serial: ");
+  //   //Serial.println(currentPowerBuffer[currentPowerBufferIndex]);
+  //   currentPowerBufferIndex++;
+  // }
+  currentPower = (currentPowerBuffer[0] << 8 | currentPowerBuffer[1]); // merge 2 bytes into single variable to calculate power value
+
+  Serial.print("Momentanverbrauch (DEC): "); //
+  Serial.println(currentPower);
+  loRaModule.print("<01;02;");
+  loRaModule.print(currentPower);
+  loRaModule.println(">");
+}
+
+
+
+void setup()
+{
+
+  // ########## START - Serial init ##########
+  Serial.begin(115200);
+  Serial2.begin(9600);
+
+  // Enable module
+  pinMode(loRaModuleM0, OUTPUT);
+  pinMode(loRaModuleM1, OUTPUT);
+  digitalWrite(loRaModuleM0, LOW);
+  digitalWrite(loRaModuleM1, LOW);
+
+  Serial.println(F("MQTT SML PowerMeter"));
+
+  // Setting output pin high before initializing prevents sending of invalid first byte
+  // https://github.com/plerup/espsoftwareserial/issues/254
+  digitalWrite(26, HIGH);
+  loRaModule.begin(115200, SWSERIAL_8N1, 25, 26);
+  //  DEBUG
+  // Serial connection seems to be unreliable without delay between initializing serial port and sending data
+  //delay(15);
+  //loRaModule.println("MQTT SML PowerMeter"); 
+  // ########## END - Serial init ##########
+
+
+  // ########## START - Get data ##########
+  while (Serial2.available() > 0 && continueSearch == true)
+  {
+
+    // Falls zu langsam gefüllt
+    // delay(20);
+
+    // Gesamtverbrauch
+    // Serial.println("Searching usedPowerMarker");
+    while (findbeforeUsedPowerMarkerMissing == true)
+    {
+      continueFilling = true;      // allow searching for marker for following function
+      findbeforeUsedPowerMarker(); // after it we found the beginning of the 1.8.0 block
+    }
+
+    // Serial.println("Extracting handleUsedPowerData");
+    handleUsedPowerData();
+
+    // Falls zu langsam gefüllt
+    // delay(20);
+    // Aktueller Verbrauch
+    // Serial.println("Searching currentPowerMarker");
+    while (findbeforeCurrentPowerMarkerMissing == true)
+    {
+      continueFilling = true;         // allow searching for marker for following function
+      findbeforeCurrentPowerMarker(); // after it we found the beginning of the 16.7.0 block
+    }
+
+    // Serial.println("Extracting handleUsedPowerData");
+    handleCurrentPowerData();
+
+    continueSearch = false;
+  }
+  // ########## END - Get data ##########
+
+
+  // ########## START - Shutdown LoRA Module ##########
+  digitalWrite(loRaModuleM0, LOW);
+  digitalWrite(loRaModuleM1, LOW);
+  // ########## END - Shutdown LoRA Module ##########
+
+
+  // ########## START - Deep Sleep ##########
+  //Serial.println("Deep sleep for 292 (5min) seconds");
+  //ESP.deepSleep(292e6);
+  ESP.deepSleep(50e6); //10s + 50s = 60s
+  // ########## END - Deep Sleep ##########
+
+}
+
+
+
+void loop()
+{
+
+  /* --- DEBUG ONLY ---
+  while (Serial2.available() > 0 && continueSearch == true)
+  {
+
+    // Falls zu langsam gefüllt
+    // delay(20);
+
+    // Gesamtverbrauch
+    // Serial.println("Searching usedPowerMarker");
+    while (findbeforeUsedPowerMarkerMissing == true)
+    {
+      continueFilling = true;      // allow searching for marker for following function
+      findbeforeUsedPowerMarker(); // after it we found the beginning of the 1.8.0 block
+    }
+
+    // Serial.println("Extracting handleUsedPowerData");
+    handleUsedPowerData();
+
+    // Falls zu langsam gefüllt
+    // delay(20);
+    // Aktueller Verbrauch
+    // Serial.println("Searching currentPowerMarker");
+    while (findbeforeCurrentPowerMarkerMissing == true)
+    {
+      continueFilling = true;         // allow searching for marker for following function
+      findbeforeCurrentPowerMarker(); // after it we found the beginning of the 16.7.0 block
+    }
+
+    // Serial.println("Extracting handleUsedPowerData");
+    handleCurrentPowerData();
+
+    continueSearch = false;
+  }
+
+  // Zero-out variables and buffers
+  memset(serialByteBuffer, 0, sizeof(serialByteBuffer));
+  startArrayIndex = 0;
+  stopArrayIndex = 0;
+  memset(beforeUsedPowerMarkerBuffer, 0, sizeof(beforeUsedPowerMarkerBuffer));
+  memset(beforeUsedPowerMarkerCompareBuffer, 0, sizeof(beforeUsedPowerMarkerCompareBuffer));
+  memset(beforeCurrentPowerMarkerBuffer, 0, sizeof(beforeCurrentPowerMarkerBuffer));
+  memset(beforeCurrentPowerMarkerCompareBuffer, 0, sizeof(beforeCurrentPowerMarkerCompareBuffer));
+  tempArrayIndexToWrite = 0;
+  tempArrayIndexToRead = 0;
+  tempCurrentPowerArrayIndexToWrite = 0;
+  tempCurrentPowerArrayIndexToRead = 0;
+  beforeUsedPowerMarkerCompareBufferIndex = 7;
+  beforeCurrentPowerMarkerCompareBufferIndex = 7;
+  continueFilling = true;
+  findbeforeUsedPowerMarkerMissing = true;
+  findbeforeCurrentPowerMarkerMissing = true;
+  status = 0;
+  memset(usedPowerBuffer, 0, sizeof(usedPowerBuffer));
+  usedPowerBufferIndex = 0;
+  usedPower = 0;
+  usedPowerkWh = 0;
+  memset(currentPowerBuffer, 0, sizeof(currentPowerBuffer));
+  currentPowerBufferIndex = 0;
+  currentPower = 0;
+
+  // Debug only
+  continueSearch = true;
+  */
+}

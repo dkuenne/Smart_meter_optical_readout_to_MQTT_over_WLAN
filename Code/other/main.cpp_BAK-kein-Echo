@@ -1,0 +1,102 @@
+// Includes
+#include <Arduino.h>
+
+byte serialByteBuffer[1];       // Buffer for receiving serial data
+byte smlMessage[1500]; // whole message should not exceed 1500 bytes
+int startArrayIndex = 0;
+int stopArrayIndex = 0;
+int smlMessageArrayIndex = 0;
+
+const byte startMarker[] = {0x1B, 0x1B, 0x1B, 0x1B, 0x01, 0x01, 0x01, 0x01};           // SML start block
+byte startMarkerBuffer[8];
+byte startMarkerCompareBuffer[8];
+const byte stopMarker[] = {0x1B, 0x1B, 0x1B, 0x1B, 0x1A};                              // SML end block
+const byte beforeUsedPowerMarker[] = {0x77, 0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF}; // 77070100010800FF
+const byte afterUsedPowerMarker[] = {0x01, 0x77};                                      // 0177
+
+
+// Ring Buffer
+int tempArrayIndexToWrite = 0;  // Array position for writing
+int tempArrayIndexToRead = 0;   // Array position for reading
+int startMarkerCompareBufferIndex = 7;
+bool continueFilling = true;    // Stop getting data if marker was found
+int status;
+
+
+char receivedChar;
+boolean newData = false;
+
+
+
+
+void setup()
+{
+
+  // ########## START - Serial init ##########
+  Serial.begin(115200);
+  Serial2.begin(115200);
+  Serial.println(F("MQTT SML PowerMeter"));
+  Serial2.println(F("oy m8!"));
+  // ########## END - Serial init ##########
+}
+
+
+
+void findStartMarker(){
+
+  // Fill buffer with serial data byte by byte and compare
+  for(int i1 = 0; i1 < 8 && continueFilling; i1++){
+    
+    // Fill buffer
+    // Check if at the end first
+    if(tempArrayIndexToWrite == sizeof(startMarkerBuffer)){
+      tempArrayIndexToWrite = 0;
+    }
+
+    // Read one byte, place it into buffer and fill array with it
+    Serial2.readBytes(serialByteBuffer,1);
+    startMarkerBuffer[tempArrayIndexToWrite] = serialByteBuffer[0];
+
+    // Read and compare
+    // Since we know the end position after filling we fill the array to compare backwards to keep the right direction of data
+    tempArrayIndexToRead = tempArrayIndexToWrite;
+
+    startMarkerCompareBufferIndex = 7;
+    for(int i2 = 0; i2 < 8; i2++){
+
+      // Check if we are at the beginning of the array, if yes start at the end
+      if(tempArrayIndexToRead == -1){
+        tempArrayIndexToRead = sizeof(startMarkerBuffer)-1;  // Arrays are 0-7 for 8 parts so max. position is 7
+      }
+
+      startMarkerCompareBuffer[startMarkerCompareBufferIndex] = startMarkerBuffer[tempArrayIndexToRead];
+      // Step one position back in array
+      startMarkerCompareBufferIndex--;
+      tempArrayIndexToRead--;
+    }
+    
+    // Compare and break loop if found
+    
+    status = memcmp(startMarker,startMarkerCompareBuffer, sizeof(startMarker));
+    if (status == 0) Serial.println("Buffermatch");
+    if (status == 0) continueFilling = false;
+    else;
+
+    // Write at next position in array
+    tempArrayIndexToWrite++;
+  }
+
+
+
+  }
+
+
+
+
+void loop() {
+  while (Serial2.available() > 0){
+    findStartMarker();
+    // now stops if marker is found, nice!
+
+  }
+}
