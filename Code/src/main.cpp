@@ -1,3 +1,16 @@
+/*
+Smart meter optical readout to MQTT over WLAN
+
+Author:
+Dominik Künne
+
+Used libraries:
+https://github.com/olliiiver/sml_parser
+https://github.com/plerup/espsoftwareserial/
+https://github.com/adafruit/Adafruit_MQTT_Library
+*/
+
+
 // Includes
 #include <Arduino.h>
 #include <SoftwareSerial.h>
